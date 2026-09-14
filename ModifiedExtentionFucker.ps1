@@ -7,42 +7,38 @@ $TargetPaths = @(
     "C:\Users\Public"
 )
 
-# Define known executable extensions.
-$KnownExeExtensions = @('.exe', '.dll', '.sys', '.scr', '.msi', '.bat', '.cmd', '.cpl')
+# Extensions that should NOT natively contain compiled executable machine code
+$NonExeExtensions = @('.png', '.jpg', '.jpeg', '.gif', '.txt', '.cfg', '.ini', '.log', '.dat', '.mp4', '.zip', '.pdf')
 
-Write-Host "[*] Auditing files for extension modifications, random extensions, and extensionless EXEs..." -ForegroundColor Cyan
-Write-Host "[*] Checking magic file headers. Please wait...`n" -ForegroundColor Gray
+Write-Host "[*] Auditing files for extension modifications and extensionless EXEs..." -ForegroundColor Cyan
+Write-Host "[*] Checking all files for MZ. Please wait...`n" -ForegroundColor Gray
 
 $FoundCount = 0
 
 foreach ($Path in $TargetPaths) {
     if (-not (Test-Path $Path)) { continue }
 
-    # Gathering the files -filters out legitimate executables-
-    $Files = Get-ChildItem -Path $Path -Recurse -File -ErrorAction SilentlyContinue | 
-             Where-Object { $_.Extension.ToLower() -notin $KnownExeExtensions }
+    # Gathering the files - Added the -Force parameter to include Hidden and Read-Only items
+    $Files = Get-ChildItem -Path $Path -Recurse -File -Force -ErrorAction SilentlyContinue | 
+             Where-Object { $_.Extension.ToLower() -in $NonExeExtensions -or [string]::IsNullOrEmpty($_.Extension) }
 
     foreach ($File in $Files) {
         try {
-            # Read the header
+            # Safely open file stream and read the first two bytes (Magic Header)
             $Stream = [System.IO.File]::OpenRead($File.FullName)
             $Bytes = New-Object Byte[] 2
             $ReadCount = $Stream.Read($Bytes, 0, 2)
             $Stream.Close()
 
             if ($ReadCount -eq 2) {
-                # From bytes to MZ
+                # Convert bytes to string to check for the 'MZ' executable magic header
                 $MagicHeader = [System.Text.Encoding]::ASCII.GetString($Bytes)
                 
                 if ($MagicHeader -eq "MZ") {
                     $FoundCount++
                     
-                    # Extentionless or Spoofed...
-                    if ([string]::IsNullOrEmpty($File.Extension)) { 
-                        $DetectionType = "EXTENSIONLESS EXECUTABLE DETECTED!" 
-                    } else { 
-                        $DetectionType = "SPOOFED / CUSTOM EXTENSION DETECTED ($($File.Extension.ToUpper()))!" 
-                    }
+                    # Determine if it's a spoofed extension or entirely extensionless
+                    $DetectionType = if ([string]::IsNullOrEmpty($File.Extension)) { "EXTENSIONLESS EXECUTABLE DETECTED!" } else { "SPOOFED EXECUTABLE DETECTED!" }
 
                     # Checking signature
                     $Signature = Get-AuthenticodeSignature -FilePath $File.FullName -ErrorAction SilentlyContinue
@@ -53,6 +49,11 @@ foreach ($Path in $TargetPaths) {
                     Write-Host "    Current Name: $($File.Name)" -ForegroundColor White
                     Write-Host "    Full Path:    $($File.FullName)" -ForegroundColor Gray
                     Write-Host "    Signature:    $SigText" -ForegroundColor $SigColor
+                    
+                    # Optional visual indicator to show if a detected file was hidden
+                    if ($File.Attributes -match "Hidden") {
+                        Write-Host "    Attributes:   HIDDEN FILE" -ForegroundColor DarkYellow
+                    }
                     Write-Host ""
                 }
             }
@@ -64,10 +65,10 @@ foreach ($Path in $TargetPaths) {
 
 # Credits ( Cause I am the best )
 Write-Host "[*] Scan complete." -ForegroundColor Cyan
-Write-Host "Made with love by kastris_`n" -ForegroundColor Blue
+Write-Host "Made by kastris_`n" -ForegroundColor Blue
 
 if ($FoundCount -eq 0) {
-    Write-Host "[+] Clean! No hidden, custom, or extensionless executables found." -ForegroundColor Green
+    Write-Host "[+] Clean! No hidden or extensionless executables found." -ForegroundColor Green
 } else {
     Write-Host "[!] Warning: Found $FoundCount executable file(s) disguised or missing extensions." -ForegroundColor Red
 }
