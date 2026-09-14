@@ -7,10 +7,10 @@ $TargetPaths = @(
     "C:\Users\Public"
 )
 
-# Extensions that should NOT natively contain compiled executable machine code
-$NonExeExtensions = @('.png', '.jpg', '.jpeg', '.gif', '.txt', '.cfg', '.ini', '.log', '.dat', '.mp4', '.zip', '.pdf')
+# Define known executable extensions.
+$KnownExeExtensions = @('.exe', '.dll', '.sys', '.scr', '.msi', '.bat', '.cmd', '.cpl')
 
-Write-Host "[*] Auditing files for extension modifications and extensionless EXEs..." -ForegroundColor Cyan
+Write-Host "[*] Auditing files for extension modifications, random extensions, and extensionless EXEs..." -ForegroundColor Cyan
 Write-Host "[*] Checking magic file headers. Please wait...`n" -ForegroundColor Gray
 
 $FoundCount = 0
@@ -18,27 +18,31 @@ $FoundCount = 0
 foreach ($Path in $TargetPaths) {
     if (-not (Test-Path $Path)) { continue }
 
-    # Gathering the files
+    # Gathering the files -filters out legitimate executables-
     $Files = Get-ChildItem -Path $Path -Recurse -File -ErrorAction SilentlyContinue | 
-             Where-Object { $_.Extension.ToLower() -in $NonExeExtensions -or [string]::IsNullOrEmpty($_.Extension) }
+             Where-Object { $_.Extension.ToLower() -notin $KnownExeExtensions }
 
     foreach ($File in $Files) {
         try {
-            # Safely open file stream and read the first two bytes (Magic Header)
+            # Read the header
             $Stream = [System.IO.File]::OpenRead($File.FullName)
             $Bytes = New-Object Byte[] 2
             $ReadCount = $Stream.Read($Bytes, 0, 2)
             $Stream.Close()
 
             if ($ReadCount -eq 2) {
-                # Convert bytes to string to check for the 'MZ' executable magic header
+                # From bytes to MZ
                 $MagicHeader = [System.Text.Encoding]::ASCII.GetString($Bytes)
                 
                 if ($MagicHeader -eq "MZ") {
                     $FoundCount++
                     
-                    # Determine if it's a spoofed extension or entirely extensionless
-                    $DetectionType = if ([string]::IsNullOrEmpty($File.Extension)) { "EXTENSIONLESS EXECUTABLE DETECTED!" } else { "SPOOFED EXECUTABLE DETECTED!" }
+                    # Extentionless or Spoofed...
+                    if ([string]::IsNullOrEmpty($File.Extension)) { 
+                        $DetectionType = "EXTENSIONLESS EXECUTABLE DETECTED!" 
+                    } else { 
+                        $DetectionType = "SPOOFED / CUSTOM EXTENSION DETECTED ($($File.Extension.ToUpper()))!" 
+                    }
 
                     # Checking signature
                     $Signature = Get-AuthenticodeSignature -FilePath $File.FullName -ErrorAction SilentlyContinue
@@ -58,13 +62,12 @@ foreach ($Path in $TargetPaths) {
     }
 }
 
-    # Credits ( Cause I am the best )
-
+# Credits ( Cause I am the best )
 Write-Host "[*] Scan complete." -ForegroundColor Cyan
 Write-Host "Made with love by kastris_`n" -ForegroundColor Blue
 
 if ($FoundCount -eq 0) {
-    Write-Host "[+] Clean! No hidden or extensionless executables found." -ForegroundColor Green
+    Write-Host "[+] Clean! No hidden, custom, or extensionless executables found." -ForegroundColor Green
 } else {
     Write-Host "[!] Warning: Found $FoundCount executable file(s) disguised or missing extensions." -ForegroundColor Red
 }
